@@ -1,0 +1,9 @@
+flask
+flask_cors
+numpy
+pandas
+rasterio
+scikit-learn
+joblib
+jenkspy
+matplotlib
