@@ -7,3 +7,4 @@ scikit-learn
 joblib
 jenkspy
 matplotlib
+gunicorn 
