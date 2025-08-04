@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Flood Risk Management</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+
+  <style>
+    body {
+      margin: 0;
+      padding: 30px;
+      font-family: 'Segoe UI', sans-serif;
+      background: url('https://images.unsplash.com/photo-1567654007013-3d64876fe8dd?q=80&w=1470&auto=format&fit=crop') no-repeat center center fixed;
+      background-size: cover;
+      color: rgb(114, 0, 89);
+    }
+
+    .input-section {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    label {
+      margin-right: 10px;
+      font-weight: bold;
+    }
+
+    #fileInput {
+      margin-right: 20px;
+    }
+
+    #runBtn {
+      padding: 8px 16px;
+      font-weight: bold;
+      background-color: rgb(114, 0, 89);
+      border: none;
+      border-radius: 5px;
+      color: #e2ebee;
+      cursor: pointer;
+    }
+
+    #statusMsg {
+      margin-left: 20px;
+      font-weight: bold;
+      color: darkblue;
+    }
+
+    #map {
+      height: 500px;
+      margin-top: 30px;
+      border: 2px solid #800f76;
+      border-radius: 10px;
+    }
+
+    #fileList {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr); /* 3 columns */
+    gap: 4px;
+    margin: 4px 0;
+    padding: 0;
+    list-style: none;
+    font-size: 11px; /* Smaller font */
+    max-height: 60px; /* Prevent from pushing down map */
+    overflow-y: auto;
+  }
+
+    #fileList li {
+    background: rgba(255, 255, 255, 0.8);
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+
+  </style>
+</head>
+<body>
+
+  <h1>Flood Risk Management Module</h1>
+  <p>Select exactly <strong>14 .tif raster files</strong> representing flood factors and click <strong>Run Prediction</strong> to compute the Flood Susceptibility Map.</p>
+
+  <!-- File selection section -->
+  <div class="input-section">
+    <label for="fileInput">Select Raster Files:</label>
+    <input type="file" id="fileInput" multiple accept=".tif" />
+    <button id="runBtn">Run Prediction</button>
+    <span id="statusMsg"></span>
+  </div>
+
+  <ul id="fileList"></ul>
+
+  <!-- Leaflet Map Container -->
+  <div id="map"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+
+  <script>
+  const fileInput = document.getElementById('fileInput');
+  const runBtn = document.getElementById('runBtn');
+  const fileList = document.getElementById('fileList');
+  const statusMsg = document.getElementById('statusMsg');
+
+  let selectedFiles = [];
+
+  // Initialize Leaflet map centered over Kenya
+  const map = L.map('map').setView([0.5, 37.5], 7);
+
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  });
+
+  const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles © Esri'
+  });
+
+  osm.addTo(map);
+  L.control.layers({ "OpenStreetMap": osm, "Satellite (Esri)": esriSat }).addTo(map);
+
+  let overlay;
+  let overlayToggle;
+
+  // Show selected files
+  fileInput.addEventListener('change', () => {
+    selectedFiles = Array.from(fileInput.files).filter(f => f.name.endsWith('.tif'));
+    fileList.innerHTML = '';
+    selectedFiles.forEach(file => {
+      const li = document.createElement('li');
+      li.textContent = file.name;
+      fileList.appendChild(li);
+    });
+  });
+
+  // Run prediction on button click
+  runBtn.addEventListener('click', async () => {
+    if (selectedFiles.length !== 14) {
+      alert('Please select exactly 14 .tif files.');
+      return;
+    }
+
+    runBtn.disabled = true;
+    statusMsg.textContent = "Running prediction...";
+
+    const formData = new FormData();
+    selectedFiles.forEach(file => {
+      formData.append('files[]', file);
+    });
+
+    try {
+      const res = await fetch('/predict', {
+        method: 'POST',
+        body: formData
+      });
+
+      const result = await res.json();
+
+      if (!res.ok || result.error) {
+        statusMsg.textContent = `Prediction failed ❌: ${result.error || 'Unknown error'}`;
+        runBtn.disabled = false;
+        return;
+      }
+
+      const floodMapUrl = result.flood_map_url;
+      const bounds = result.bounds || [[-4, 33], [4, 39]];  // fallback bounds
+
+      if (overlay) {
+        map.removeLayer(overlay);
+        if (overlayToggle) map.removeControl(overlayToggle);
+      }
+
+      overlay = L.imageOverlay(floodMapUrl, bounds, { opacity: 0.6 });
+      overlay.addTo(map);
+      map.fitBounds(bounds);
+
+      // Add overlay toggle checkbox
+      overlayToggle = L.control({ position: 'topright' });
+      overlayToggle.onAdd = function () {
+        const div = L.DomUtil.create('div');
+        div.innerHTML = `<label style="background: white; padding: 5px; border-radius: 5px;">
+          <input type="checkbox" id="toggleOverlay" checked /> Show Overlay
+        </label>`;
+        return div;
+      };
+      overlayToggle.addTo(map);
+
+      // Toggle overlay visibility
+      setTimeout(() => {
+        const toggleCheckbox = document.getElementById('toggleOverlay');
+        toggleCheckbox.addEventListener('change', function () {
+          if (this.checked) {
+            overlay.addTo(map);
+          } else {
+            map.removeLayer(overlay);
+          }
+        });
+      }, 100); // Wait for checkbox to be rendered
+
+      statusMsg.textContent = "Prediction completed ✅";
+
+    } catch (error) {
+      console.error("Prediction error:", error);
+      statusMsg.textContent = "Prediction failed ❌";
+    } finally {
+      runBtn.disabled = false;
+    }
+  });
+</script>
+
+
+</body>
+</html>
